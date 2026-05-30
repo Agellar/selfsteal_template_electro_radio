@@ -1,0 +1,28 @@
+{
+  "_comment": "Свои станции для ElectroWave Radio. Скопируйте этот файл в stations.json и положите рядом с electrowave-radio.html (или передайте ?manifest=URL). Файлы/потоки могут лежать на вашем сервере. На HTTPS-странице ссылки тоже должны быть https. Для настоящего визуализатора отдавайте файлы с заголовком Access-Control-Allow-Origin.",
+
+  "stations": [
+    {
+      "id": "my-synthwave",
+      "name": "Моя синтвейв-подборка",
+      "genre": "Synthwave",
+      "tags": ["Synthwave", "Chillout"],
+      "description": "Личный плейлист с файлами, которые лежат на моём сервере. Играют по очереди и зацикливаются.",
+      "icon": "https://example.com/cover.png",
+      "tracks": [
+        { "title": "Night Drive",   "artist": "My Artist", "src": "https://example.com/music/night-drive.mp3" },
+        { "title": "Neon Streets",  "artist": "My Artist", "src": "https://example.com/music/neon-streets.mp3" },
+        { "title": "After Hours",   "artist": "My Artist", "src": "https://example.com/music/after-hours.aac" }
+      ]
+    },
+
+    {
+      "id": "my-stream",
+      "name": "Моя живая станция",
+      "genre": "Techno",
+      "tags": ["Techno"],
+      "description": "Пример станции-потока (Icecast/Shoutcast) вместо файлов — укажите поле stream.",
+      "stream": "https://stream.example.com/live"
+    }
+  ]
+}

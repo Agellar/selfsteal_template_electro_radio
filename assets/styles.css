@@ -611,6 +611,28 @@ input[type="range"]::-moz-range-track { height: 4px; border-radius: 4px; backgro
 .has-icon .station-icon { opacity: 1; }
 .has-icon .sc-monogram-text, .has-icon .mp-monogram { opacity: 0; }
 
+/* Бейдж «своя станция» */
+.sc-badge { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); border-radius: var(--radius-pill); padding: 2px 8px; }
+.station-card.is-custom .sc-monogram { background: var(--accent); color: var(--accent-contrast); }
+
+/* Плейлист в развёрнутом плеере */
+.pm-playlist { margin-top: var(--s-6); border-top: 1px solid var(--border); padding-top: var(--s-5); }
+.pm-playlist h3 { font-size: 1rem; margin-bottom: var(--s-3); }
+.pm-playlist-list { display: grid; gap: 2px; }
+.pm-pl-item { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-3); border-radius: var(--radius-sm); cursor: pointer; transition: background-color 0.18s var(--ease); }
+.pm-pl-item:hover { background: var(--surface-2); }
+.pm-pl-item .pl-idx { font-family: var(--font-display); font-size: 0.78rem; color: var(--text-faint); min-width: 1.6em; text-align: right; flex: none; }
+.pm-pl-item .pl-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-pl-item .pl-title { font-weight: 500; }
+.pm-pl-item .pl-artist { color: var(--text-muted); }
+.pm-pl-item.is-current { background: var(--accent-soft); }
+.pm-pl-item.is-current .pl-title, .pm-pl-item.is-current .pl-idx { color: var(--accent-strong); }
+.pm-pl-item .pl-eq { display: none; gap: 2px; align-items: flex-end; height: 14px; flex: none; }
+.pm-pl-item.is-current .pl-eq { display: inline-flex; }
+.pm-pl-item .pl-eq i { width: 3px; background: var(--accent); border-radius: 2px; height: 5px; animation: eqbar 0.9s ease-in-out infinite; }
+.pm-pl-item .pl-eq i:nth-child(2) { animation-delay: 0.25s; }
+.pm-pl-item .pl-eq i:nth-child(3) { animation-delay: 0.5s; }
+
 /* Переключатель «запомнить настройки» в подвале */
 .consent-toggle { display: flex; align-items: flex-start; gap: var(--s-3); cursor: pointer; max-width: 32rem; }
 .consent-toggle input { margin-top: 0.2rem; width: 18px; height: 18px; accent-color: var(--accent); flex: none; cursor: pointer; }

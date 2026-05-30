@@ -6,6 +6,10 @@
 
   const RR = 'https://radiorecord.hostingradio.ru/';
 
+  // Свои станции: положите stations.json рядом с сайтом (или передайте ?manifest=URL).
+  // Формат — см. stations.example.json. Манифест может ссылаться на файлы/потоки на вашем сервере.
+  const MANIFEST_URL = 'stations.json';
+
   /* ---------- Каталог станций ----------
      rr:true  — Radio Record (поддерживает API текущего трека)
      secure:false — поток по HTTP (на HTTPS-странице будет недоступен) */
@@ -78,7 +82,7 @@
       const base = url.split('/').pop().split('.')[0];
       prefix = base.replace(/\d+$/, '');
     }
-    return { id, name, genre, tags, url, desc, rr, secure, prefix, status: 'idle', track: '', icon: null };
+    return { id, name, genre, tags, url, desc, rr, secure, prefix, status: 'idle', track: '', icon: null, type: 'live' };
   }
 
   const FILTERS = ['Все','House','Techno','Trance','Synthwave','Ambient','EDM','DnB','Chillout'];
@@ -164,6 +168,7 @@
     userPaused: false,      // пауза по воле пользователя (а не обрыв)
     reconnectAttempts: 0,
     reconnectTimer: null,
+    trackFails: 0,          // подряд неудачных треков в плейлисте
   };
   audioEngine.audio.preload = 'none';
   audioEngine.audio.volume = audioEngine.volume;
@@ -239,10 +244,11 @@
     });
   }
 
-  function renderStations(){
-    const grid = $('#stationsGrid');
-    grid.innerHTML = STATIONS.map(s => `
-      <article class="station-card" id="st-${s.id}" data-id="${s.id}" data-tags="${esc(s.tags.join(' '))}" data-name="${esc(s.name.toLowerCase())}">
+  function cardHTML(s){
+    const fav = favorites.has(s.id);
+    const badge = s.custom ? `<span class="sc-badge">${s.type==='playlist'?'мой плейлист':'моя станция'}</span>` : '';
+    return `
+      <article class="station-card${s.custom?' is-custom':''}" id="st-${s.id}" data-id="${esc(s.id)}" data-tags="${esc(s.tags.join(' '))}" data-name="${esc(s.name.toLowerCase())}">
         <div class="sc-top">
           <span class="sc-monogram" aria-hidden="true"><span class="sc-monogram-text">${esc(monogram(s.name))}</span></span>
           <span class="sc-status" data-state="checking" role="status">
@@ -250,41 +256,60 @@
           </span>
         </div>
         <h3 class="sc-name">${esc(s.name)}</h3>
-        <div class="sc-tags"><span class="sc-tag">${esc(s.genre)}</span></div>
+        <div class="sc-tags"><span class="sc-tag">${esc(s.genre)}</span>${badge}</div>
         <p class="sc-desc">${esc(s.desc)}</p>
-        <p class="sc-now" data-now hidden><b>В эфире</b><span></span></p>
+        <p class="sc-now" data-now hidden><b>${s.type==='playlist'?'Трек':'В эфире'}</b><span></span></p>
         <div class="sc-actions">
-          <button class="sc-play" type="button" data-play="${s.id}" aria-label="Слушать ${esc(s.name)}">
+          <button class="sc-play" type="button" data-play="${esc(s.id)}" aria-label="Слушать ${esc(s.name)}">
             <svg class="ic-play" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
             <svg class="ic-pause" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
             <span class="sc-eqmini" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
             <span class="sc-play-label">Слушать</span>
           </button>
-          <button class="sc-detail" type="button" data-detail="${s.id}">Подробнее</button>
-          <button class="sc-fav${favorites.has(s.id)?' is-fav':''}" type="button" data-fav="${s.id}" aria-pressed="${favorites.has(s.id)}" aria-label="${favorites.has(s.id)?'Убрать из избранного':'Добавить в избранное'}" title="В избранное">
+          <button class="sc-detail" type="button" data-detail="${esc(s.id)}">Подробнее</button>
+          <button class="sc-fav${fav?' is-fav':''}" type="button" data-fav="${esc(s.id)}" aria-pressed="${fav}" aria-label="${fav?'Убрать из избранного':'Добавить в избранное'}" title="В избранное">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3.4l2.5 5.4 5.9.6-4.4 4 1.2 5.8L12 21.3 6.8 19.2 8 13.4 3.6 9.4l5.9-.6z"/></svg>
           </button>
         </div>
-      </article>`).join('');
+      </article>`;
+  }
 
-    grid.addEventListener('click', e => {
-      const p = e.target.closest('[data-play]');
-      const d = e.target.closest('[data-detail]');
-      const f = e.target.closest('[data-fav]');
-      if (f) { toggleFavorite(f.dataset.fav); }
-      else if (p) { onPlayClick(p.dataset.play); }
-      else if (d) { selectStation(d.dataset.detail, false); openModal(); }
-    });
-
-    // ленивый статус-чек при попадании карточки во вьюпорт
-    if ('IntersectionObserver' in window) {
-      const obs = new IntersectionObserver((entries, o) => {
-        entries.forEach(en => { if (en.isIntersecting) { queueStatusCheck(en.target.dataset.id); o.unobserve(en.target); } });
-      }, { rootMargin: '200px' });
-      $$('.station-card', grid).forEach(c => obs.observe(c));
-    } else {
-      STATIONS.forEach(s => queueStatusCheck(s.id));
+  let statusObserver = null, gridBound = false;
+  function ensureStatusObserver(){
+    if (statusObserver || !('IntersectionObserver' in window)) return;
+    statusObserver = new IntersectionObserver((entries, o) => {
+      entries.forEach(en => { if (en.isIntersecting) { queueStatusCheck(en.target.dataset.id); o.unobserve(en.target); } });
+    }, { rootMargin: '200px' });
+  }
+  function observeForStatus(cards){
+    ensureStatusObserver();
+    if (statusObserver) cards.forEach(c => c && statusObserver.observe(c));
+    else cards.forEach(c => c && queueStatusCheck(c.dataset.id));
+  }
+  function renderStations(){
+    const grid = $('#stationsGrid');
+    grid.innerHTML = STATIONS.map(cardHTML).join('');
+    if (!gridBound){
+      grid.addEventListener('click', e => {
+        const p = e.target.closest('[data-play]');
+        const d = e.target.closest('[data-detail]');
+        const f = e.target.closest('[data-fav]');
+        if (f) { toggleFavorite(f.dataset.fav); }
+        else if (p) { onPlayClick(p.dataset.play); }
+        else if (d) { selectStation(d.dataset.detail, false); openModal(); }
+      });
+      gridBound = true;
     }
+    observeForStatus($$('.station-card', grid));
+  }
+  // добавление станций из манифеста без перепривязки слушателей
+  function appendStations(list){
+    if (!list.length) return;
+    $('#stationsGrid').insertAdjacentHTML('beforeend', list.map(cardHTML).join(''));
+    list.forEach(s => { if (s.icon) applyIcon(s); });
+    observeForStatus(list.map(s => document.getElementById('st-'+s.id)));
+    if (sortMode !== 'default') sortStations();
+    applyFilter();
   }
 
   function renderGenres(){
@@ -384,6 +409,9 @@
     if (!s) return;
     clearReconnect();
     audioEngine.userPaused = false;
+    audioEngine.trackFails = 0;
+    // при переходе на другую плейлист-станцию начинаем с первого трека
+    if (s.type === 'playlist' && (!audioEngine.currentStation || audioEngine.currentStation.id !== s.id)) s.trackIndex = 0;
 
     // HTTP-поток на HTTPS-странице — заблокирован браузером (mixed content)
     if (!s.secure && location.protocol === 'https:') {
@@ -422,7 +450,17 @@
 
   function startStream(s){
     const a = audioEngine.audio;
-    a.src = s.url;
+    if (s.type === 'playlist' && s.tracks && s.tracks.length){
+      const t = s.tracks[s.trackIndex] || s.tracks[0];
+      a.src = t.src;
+      s.track = t.artist ? `${t.artist} — ${t.title}` : t.title;
+      setTrackText($('#mpTrack'), s.track);
+      setTrackText($('#pmTrack'), s.track);
+      updateMediaSession();
+      highlightPlaylist();
+    } else {
+      a.src = s.url;
+    }
     a.volume = audioEngine.volume;
     const p = a.play();
     if (p && p.catch) p.catch(err => {
@@ -517,8 +555,10 @@
   // события аудио-элемента
   const a = audioEngine.audio;
   a.addEventListener('playing', () => {
-    audioEngine.isPlaying = true; audioEngine.userPaused = false; clearReconnect();
+    audioEngine.isPlaying = true; audioEngine.userPaused = false; audioEngine.trackFails = 0; clearReconnect();
     reflectPlayState(); setPlayerStatus('online', 'В эфире'); startViz(); updateMediaSession();
+    const cur = audioEngine.currentStation;
+    if (cur && cur.type === 'playlist') pushHistory(cur, cur.track || '');
   });
   a.addEventListener('pause',   () => {
     audioEngine.isPlaying = false; reflectPlayState(); updateMediaSession();
@@ -532,7 +572,23 @@
     const s = audioEngine.currentStation;
     if (!s || audioEngine.userPaused) { setPlayerStatus('error', 'Нет сигнала'); return; }
     if (!s.secure && location.protocol === 'https:') { setPlayerStatus('error', 'Только в приложении'); return; }
+    if (s.type === 'playlist'){                                   // битый/недоступный файл — пропускаем трек
+      audioEngine.trackFails = (audioEngine.trackFails || 0) + 1;
+      if (audioEngine.trackFails < s.tracks.length){
+        setPlayerStatus('loading', 'Пропуск трека…');
+        setTimeout(() => { if (!audioEngine.userPaused) stepTrack(1); }, 700);
+      } else {
+        audioEngine.trackFails = 0;
+        setPlayerStatus('error', 'Файлы недоступны');
+      }
+      return;
+    }
     scheduleReconnect();                                          // обрыв потока — переподключаемся
+  });
+  a.addEventListener('ended', () => {                             // только файлы заканчиваются
+    const s = audioEngine.currentStation;
+    if (s && s.type === 'playlist') stepTrack(1);                 // авто-переход + зацикливание
+    else if (s && !audioEngine.userPaused) scheduleReconnect();
   });
 
   /* ---------- Авто-переподключение при обрыве ---------- */
@@ -580,16 +636,22 @@
     const el = $('#mpStatus'); el.dataset.state = state; $('.mp-status-text', el).textContent = text;
   }
   function updateNowPlayingUI(s, track){
+    const isPl = s.type === 'playlist';
+    const first = isPl && s.tracks[0] ? (s.tracks[0].artist ? `${s.tracks[0].artist} — ${s.tracks[0].title}` : s.tracks[0].title) : '';
+    const placeholder = isPl ? (first || '—') : 'Идёт настройка эфира…';
     $('#mpMonogram').textContent = monogram(s.name);
     $('#mpStation').textContent = s.name;
-    setTrackText($('#mpTrack'), track || 'Идёт настройка эфира…');
+    setTrackText($('#mpTrack'), track || placeholder);
     // модал
     $('#pmMonogram').textContent = monogram(s.name);
     $('#pmStation').textContent = s.name;
     $('#pmGenre').textContent = s.genre;
     $('#pmDesc').textContent = s.desc;
-    setTrackText($('#pmTrack'), track || '—');
+    setTrackText($('#pmTrack'), track || (isPl ? placeholder : '—'));
+    $('#pmPrevTrack').setAttribute('aria-label', isPl ? 'Предыдущий трек' : 'Предыдущая станция');
+    $('#pmNextStation').setAttribute('aria-label', isPl ? 'Следующий трек' : 'Следующая станция');
     setCoverIcon($('#mpCover'), s);
+    renderPlaylist(s);
     reflectFavButtons();
     updateMediaSession();
   }
@@ -818,6 +880,100 @@
   }
 
   /* =======================================================
+     СВОИ СТАНЦИИ (JSON-манифест на вашем сервере)
+     ======================================================= */
+  function slug(str){ return String(str).toLowerCase().replace(/[^a-zа-я0-9]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,40) || 'st'; }
+  function normalizeManifestStation(raw){
+    if (!raw || typeof raw !== 'object' || !raw.name) return null;
+    let id = 'usr_' + slug(raw.id || raw.name);
+    if (stationById[id]) { let n = 2; while (stationById[id+'-'+n]) n++; id = id+'-'+n; }
+    const name  = String(raw.name).slice(0,120);
+    const genre = String(raw.genre || 'Моя станция').slice(0,60);
+    const tags  = Array.isArray(raw.tags) && raw.tags.length ? raw.tags.map(t => String(t).slice(0,24)).slice(0,6) : [genre];
+    const desc  = String(raw.description || raw.desc || 'Пользовательская станция.').slice(0,400);
+    const icon  = typeof raw.icon === 'string' && /^https?:\/\//.test(raw.icon) ? raw.icon : null;
+    const https = location.protocol === 'https:';
+
+    if (Array.isArray(raw.tracks) && raw.tracks.length){
+      const tracks = raw.tracks.map(t => ({
+        title:  String((t && (t.title || t.name)) || 'Без названия').slice(0,160),
+        artist: String((t && t.artist) || '').slice(0,160),
+        src:    String((t && (t.src || t.url || t.file)) || ''),
+      })).filter(t => /^https?:\/\//.test(t.src));
+      if (!tracks.length) return null;
+      const secure = !https || tracks.every(t => !t.src.startsWith('http://'));
+      return { id, name, genre, tags, url: tracks[0].src, desc, rr:false, secure, prefix:null,
+               status:'idle', track:'', icon, type:'playlist', tracks, trackIndex:0, custom:true };
+    }
+    const stream = String(raw.stream || raw.url || '');
+    if (/^https?:\/\//.test(stream)){
+      const secure = !https || !stream.startsWith('http://');
+      return { id, name, genre, tags, url: stream, desc, rr:false, secure, prefix:null,
+               status:'idle', track:'', icon, type:'live', custom:true };
+    }
+    return null;
+  }
+  let manifestLoaded = false;
+  async function loadManifest(){
+    if (manifestLoaded) return;          // защита от повторной загрузки
+    manifestLoaded = true;
+    const url = new URLSearchParams(location.search).get('manifest') || MANIFEST_URL;
+    if (!url) return;
+    let data;
+    try {
+      const r = await fetch(url, { cache:'no-cache' });
+      if (!r.ok) return;                  // манифеста нет — это нормально, тихо выходим
+      data = await r.json();
+    } catch(_) { return; }
+    const list = Array.isArray(data) ? data : (data.stations || []);
+    const added = [];
+    list.forEach(raw => {
+      const s = normalizeManifestStation(raw);
+      if (s){ STATIONS.push(s); stationById[s.id] = s; added.push(s); }
+    });
+    if (!added.length) return;
+    appendStations(added);
+    const eyebrow = $('.hero-eyebrow');
+    if (eyebrow){ const n = STATIONS.length;
+      eyebrow.innerHTML = `<span class="live-dot" aria-hidden="true"></span> ${n} ${plural(n,'станция','станции','станций')} · только электроника`; }
+  }
+
+  /* =======================================================
+     ПЛЕЙЛИСТ-СТАНЦИИ (файлы с вашего сервера)
+     ======================================================= */
+  function stepTrack(dir){
+    const s = audioEngine.currentStation;
+    if (!s || s.type !== 'playlist' || !s.tracks.length){ stepStation(dir); return; }
+    s.trackIndex = (s.trackIndex + dir + s.tracks.length) % s.tracks.length;
+    clearReconnect(); audioEngine.userPaused = false; audioEngine.trackFails = 0;
+    startStream(s);
+  }
+  function playTrackIndex(idx){
+    const s = audioEngine.currentStation;
+    if (!s || s.type !== 'playlist' || !s.tracks.length) return;
+    s.trackIndex = ((idx % s.tracks.length) + s.tracks.length) % s.tracks.length;
+    clearReconnect(); audioEngine.userPaused = false; audioEngine.trackFails = 0;
+    startStream(s);
+  }
+  function renderPlaylist(s){
+    const wrap = $('#pmPlaylistWrap'), list = $('#pmPlaylist');
+    if (!wrap || !list) return;
+    if (!s || s.type !== 'playlist'){ wrap.hidden = true; list.innerHTML = ''; return; }
+    wrap.hidden = false;
+    list.innerHTML = s.tracks.map((t,i) => `
+      <li class="pm-pl-item${i===s.trackIndex?' is-current':''}" data-track="${i}" role="button" tabindex="0">
+        <span class="pl-idx" aria-hidden="true">${i+1}</span>
+        <span class="pl-meta"><span class="pl-title">${esc(t.title)}</span>${t.artist?` <span class="pl-artist">${esc(t.artist)}</span>`:''}</span>
+        <span class="pl-eq" aria-hidden="true"><i></i><i></i><i></i></span>
+      </li>`).join('');
+  }
+  function highlightPlaylist(){
+    const s = audioEngine.currentStation;
+    if (!s || s.type !== 'playlist') return;
+    $$('#pmPlaylist .pm-pl-item').forEach((li,i) => li.classList.toggle('is-current', i === s.trackIndex));
+  }
+
+  /* =======================================================
      МОДАЛЬНЫЙ ПЛЕЕР И ПОЛИТИКА
      ======================================================= */
   const playerModal = $('#playerModal');
@@ -826,6 +982,7 @@
   function openModal(){
     if (!audioEngine.currentStation) return;
     renderHistory();
+    renderPlaylist(audioEngine.currentStation);
     if (typeof playerModal.showModal === 'function') playerModal.showModal();
     else playerModal.setAttribute('open','');
     modalOpen = true; startViz();
@@ -965,8 +1122,15 @@
     $('#pmPlay').addEventListener('click', togglePlay);
     $('#mpPrev').addEventListener('click', () => stepStation(-1));
     $('#mpNext').addEventListener('click', () => stepStation(1));
-    $('#pmPrevTrack').addEventListener('click', () => stepStation(-1));
-    $('#pmNextStation').addEventListener('click', () => stepStation(1));
+    $('#pmPrevTrack').addEventListener('click', () => stepTrack(-1));   // плейлист: трек; стрим: станция
+    $('#pmNextStation').addEventListener('click', () => stepTrack(1));
+    $('#pmPlaylist').addEventListener('click', e => {
+      const li = e.target.closest('[data-track]'); if (li) playTrackIndex(+li.dataset.track);
+    });
+    $('#pmPlaylist').addEventListener('keydown', e => {
+      const li = e.target.closest('[data-track]');
+      if (li && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); playTrackIndex(+li.dataset.track); }
+    });
     $('#mpCover').addEventListener('click', openModal);
     $('#mpStation').addEventListener('click', openModal);
     $('#mpExpand').addEventListener('click', openModal);
@@ -1020,8 +1184,8 @@
     const set = (act, fn) => { try { ms.setActionHandler(act, fn); } catch(_){} };
     set('play',  () => { if (!audioEngine.isPlaying) togglePlay(); });
     set('pause', () => { if (audioEngine.isPlaying) togglePlay(); });
-    set('previoustrack', () => stepStation(-1));
-    set('nexttrack',     () => stepStation(1));
+    set('previoustrack', () => stepTrack(-1));   // плейлист → трек, иначе → станция
+    set('nexttrack',     () => stepTrack(1));
     set('stop', () => { audioEngine.userPaused = true; clearReconnect(); audioEngine.audio.pause(); });
   }
   function updateMediaSession(){
@@ -1141,6 +1305,9 @@
       const n = STATIONS.length;
       eyebrow.innerHTML = `<span class="live-dot" aria-hidden="true"></span> ${n} ${plural(n,'станция','станции','станций')} · только электроника`;
     }
+
+    // свои станции из манифеста (best-effort)
+    loadManifest();
 
     // метаданные текущего трека (best-effort, не блокирует UI)
     pollNowPlaying();

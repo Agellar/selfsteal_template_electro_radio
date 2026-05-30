@@ -561,3 +561,59 @@ input[type="range"]::-moz-range-track { height: 4px; border-radius: 4px; backgro
 }
 
 /* На очень широких экранах артисты — до 4 колонок естественно через auto-fill */
+
+/* =========================================================
+   ДОП. ФУНКЦИИ: контролы списка, избранное, логотипы станций
+   ========================================================= */
+.stations-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); margin-bottom: var(--s-5); }
+.toggle-chip {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  font-family: var(--font-display); font-weight: 500; font-size: 0.85rem;
+  padding: 0.45em 0.9em; border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong); color: var(--text-muted); background: var(--surface);
+  transition: color 0.2s var(--ease), background-color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.toggle-chip svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.toggle-chip:hover { color: var(--text); border-color: var(--accent); }
+.toggle-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+.toggle-chip[aria-pressed="true"] svg { fill: currentColor; }
+.chip-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--online); flex: none; }
+
+.sort-control { display: inline-flex; align-items: center; gap: var(--s-2); font-size: 0.85rem; color: var(--text-muted); }
+.sort-control select {
+  font: inherit; font-size: 0.85rem; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-pill); padding: 0.4em 1.9em 0.4em 0.9em;
+  cursor: pointer; -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8f99' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 0.55em center; background-size: 0.9em;
+}
+.sort-control select:hover { border-color: var(--accent); }
+.results-count { font-size: 0.82rem; color: var(--text-faint); margin-inline-start: auto; }
+
+/* Звезда «в избранное» */
+.sc-fav {
+  width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  color: var(--text-faint); border: 1px solid var(--border);
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease), transform 0.15s var(--ease);
+}
+.sc-fav svg, .pm-fav svg { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.sc-fav:hover { color: var(--accent); border-color: var(--accent); }
+.sc-fav:active { transform: scale(0.9); }
+.sc-fav.is-fav { color: var(--accent); border-color: var(--accent); }
+.sc-fav.is-fav svg, .pm-fav.is-fav svg { fill: var(--accent); stroke: var(--accent); }
+.pm-fav.is-fav { color: var(--accent); }
+
+/* Логотипы станций (поверх монограммы, с фолбэком) */
+.sc-monogram { position: relative; overflow: hidden; }
+.mp-cover { position: relative; }
+.sc-monogram-text, .mp-monogram { transition: opacity 0.3s var(--ease); }
+.station-icon { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 14%; opacity: 0; transition: opacity 0.35s var(--ease); }
+.has-icon .station-icon { opacity: 1; }
+.has-icon .sc-monogram-text, .has-icon .mp-monogram { opacity: 0; }
+
+/* Переключатель «запомнить настройки» в подвале */
+.consent-toggle { display: flex; align-items: flex-start; gap: var(--s-3); cursor: pointer; max-width: 32rem; }
+.consent-toggle input { margin-top: 0.2rem; width: 18px; height: 18px; accent-color: var(--accent); flex: none; cursor: pointer; }
+.consent-text { font-size: 0.88rem; color: var(--text); font-weight: 500; }
+.consent-text small { display: block; color: var(--text-faint); font-size: 0.78rem; font-weight: 400; margin-top: 2px; }
+@media (min-width: 760px) { .consent-toggle { grid-column: 1 / -1; } }

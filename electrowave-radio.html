@@ -91,6 +91,26 @@
           </div>
         </div>
 
+        <div class="stations-controls">
+          <button class="toggle-chip" id="favToggle" type="button" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3.4l2.5 5.4 5.9.6-4.4 4 1.2 5.8L12 21.3 6.8 19.2 8 13.4 3.6 9.4l5.9-.6z"/></svg>
+            Избранное
+          </button>
+          <button class="toggle-chip" id="onlineToggle" type="button" aria-pressed="false">
+            <span class="chip-dot" aria-hidden="true"></span> Только онлайн
+          </button>
+          <label class="sort-control">
+            <span>Сортировка</span>
+            <select id="sortSelect" aria-label="Сортировка станций">
+              <option value="default">По умолчанию</option>
+              <option value="online">Сначала онлайн</option>
+              <option value="az">По названию (А–Я)</option>
+              <option value="genre">По жанру</option>
+            </select>
+          </label>
+          <span class="results-count" id="resultsCount" aria-live="polite"></span>
+        </div>
+
         <div class="stations-grid" id="stationsGrid" aria-live="polite"></div>
         <p class="stations-empty" id="stationsEmpty" hidden>По вашему запросу станций не найдено.</p>
       </div>
@@ -182,6 +202,10 @@
         <a href="#about">О сайте</a>
         <a href="mailto:hello@electrowave.radio">Контакты</a>
       </nav>
+      <label class="consent-toggle" for="rememberToggle">
+        <input type="checkbox" id="rememberToggle" />
+        <span class="consent-text">Запомнить мои настройки <small>тема, громкость и избранное сохранятся в этом браузере (localStorage). По умолчанию — выключено.</small></span>
+      </label>
       <p class="footer-copy">© 2025 ElectroWave Radio. Аудиопотоки предоставляются сторонними сервисами (Radio Record и др.).</p>
     </div>
   </footer>
@@ -253,6 +277,9 @@
             <button class="mp-btn mp-share" id="pmShare" type="button" aria-label="Скопировать ссылку на станцию">
               <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
             </button>
+            <button class="mp-btn pm-fav" id="pmFav" type="button" aria-pressed="false" aria-label="Добавить в избранное">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3.4l2.5 5.4 5.9.6-4.4 4 1.2 5.8L12 21.3 6.8 19.2 8 13.4 3.6 9.4l5.9-.6z"/></svg>
+            </button>
           </div>
 
           <div class="pm-volume">
@@ -282,7 +309,8 @@
         <ul>
           <li><strong>Мы не собираем персональные данные.</strong> Сайт не требует регистрации, не запрашивает имя, e-mail или иные сведения.</li>
           <li><strong>Мы не используем файлы cookie</strong> и сторонние трекеры или системы аналитики.</li>
-          <li><strong>История прослушивания</strong> хранится исключительно в оперативной памяти открытой вкладки и безвозвратно удаляется при её закрытии или перезагрузке. Мы сознательно не используем <code>localStorage</code> или <code>sessionStorage</code>.</li>
+          <li><strong>История прослушивания</strong> хранится исключительно в оперативной памяти открытой вкладки и безвозвратно удаляется при её закрытии или перезагрузке.</li>
+          <li><strong>Сохранение настроек — по вашему выбору.</strong> По умолчанию сайт ничего не пишет на диск. Если вы включите опцию «Запомнить мои настройки» в подвале, тема, громкость и список избранного будут сохранены в <code>localStorage</code> только этого браузера. Отключение опции немедленно и полностью удаляет эти данные. Сайт по-прежнему не использует cookie и <code>sessionStorage</code>.</li>
           <li><strong>Аудиопотоки</strong> предоставляются сторонними сервисами (Radio Record, Retrowave.One и др.). При прослушивании ваш браузер подключается напрямую к их серверам; на эти соединения распространяются политики конфиденциальности соответствующих сервисов.</li>
           <li><strong>Для пользователей из РФ:</strong> обработка персональных данных не осуществляется, что соответствует Федеральному закону № 152-ФЗ «О персональных данных».</li>
         </ul>

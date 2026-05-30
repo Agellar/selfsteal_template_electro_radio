@@ -78,7 +78,7 @@
       const base = url.split('/').pop().split('.')[0];
       prefix = base.replace(/\d+$/, '');
     }
-    return { id, name, genre, tags, url, desc, rr, secure, prefix, status: 'idle', track: '' };
+    return { id, name, genre, tags, url, desc, rr, secure, prefix, status: 'idle', track: '', icon: null };
   }
 
   const FILTERS = ['Все','House','Techno','Trance','Synthwave','Ambient','EDM','DnB','Chillout'];
@@ -160,6 +160,10 @@
     isPlaying: false,
     useWebAudio: false,
     probed: false,
+    probing: false,         // идёт CORS-проба
+    userPaused: false,      // пауза по воле пользователя (а не обрыв)
+    reconnectAttempts: 0,
+    reconnectTimer: null,
   };
   audioEngine.audio.preload = 'none';
   audioEngine.audio.volume = audioEngine.volume;
@@ -168,7 +172,41 @@
   let activeFilter = 'Все';
   let searchTerm = '';
   let modalOpen = false;
+  let sortMode = 'default';
+  let onlineOnly = false;
+  let favoritesOnly = false;
+  const favorites = new Set();
   const stationById = Object.fromEntries(STATIONS.map(s => [s.id, s]));
+
+  /* ---------- Хранилище (opt-in localStorage) ---------- */
+  const SK = { consent:'ew_consent', theme:'ew_theme', volume:'ew_volume', favorites:'ew_favorites' };
+  let persistEnabled = false;
+  const lsGet = k => { try { return localStorage.getItem(k); } catch(_) { return null; } };
+  const lsSet = (k,v) => { try { localStorage.setItem(k,v); } catch(_){} };
+  const lsDel = k => { try { localStorage.removeItem(k); } catch(_){} };
+  function persist(key, val){ if (persistEnabled) lsSet(key, val); }
+  function loadPersisted(){
+    if (lsGet(SK.consent) !== '1') return;
+    persistEnabled = true;
+    const th = lsGet(SK.theme);
+    if (th === 'dark' || th === 'light') document.documentElement.setAttribute('data-theme', th);
+    const vol = parseFloat(lsGet(SK.volume));
+    if (!isNaN(vol)) audioEngine.volume = Math.min(1, Math.max(0, vol));
+    try { (JSON.parse(lsGet(SK.favorites)) || []).forEach(id => { if (stationById[id]) favorites.add(id); }); } catch(_){}
+  }
+  function setPersist(on){
+    persistEnabled = on;
+    if (on){
+      lsSet(SK.consent, '1');
+      lsSet(SK.theme, currentTheme());
+      lsSet(SK.volume, String(audioEngine.volume));
+      lsSet(SK.favorites, JSON.stringify([...favorites]));
+      toast('Настройки будут сохраняться в этом браузере');
+    } else {
+      Object.values(SK).forEach(lsDel);
+      toast('Сохранённые настройки удалены');
+    }
+  }
 
   /* ---------- Утилиты ---------- */
   const $  = (s, r=document) => r.querySelector(s);
@@ -206,7 +244,7 @@
     grid.innerHTML = STATIONS.map(s => `
       <article class="station-card" id="st-${s.id}" data-id="${s.id}" data-tags="${esc(s.tags.join(' '))}" data-name="${esc(s.name.toLowerCase())}">
         <div class="sc-top">
-          <span class="sc-monogram" aria-hidden="true">${esc(monogram(s.name))}</span>
+          <span class="sc-monogram" aria-hidden="true"><span class="sc-monogram-text">${esc(monogram(s.name))}</span></span>
           <span class="sc-status" data-state="checking" role="status">
             <span class="dot" aria-hidden="true"></span><span class="sc-status-text">проверка…</span>
           </span>
@@ -223,13 +261,18 @@
             <span class="sc-play-label">Слушать</span>
           </button>
           <button class="sc-detail" type="button" data-detail="${s.id}">Подробнее</button>
+          <button class="sc-fav${favorites.has(s.id)?' is-fav':''}" type="button" data-fav="${s.id}" aria-pressed="${favorites.has(s.id)}" aria-label="${favorites.has(s.id)?'Убрать из избранного':'Добавить в избранное'}" title="В избранное">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3.4l2.5 5.4 5.9.6-4.4 4 1.2 5.8L12 21.3 6.8 19.2 8 13.4 3.6 9.4l5.9-.6z"/></svg>
+          </button>
         </div>
       </article>`).join('');
 
     grid.addEventListener('click', e => {
       const p = e.target.closest('[data-play]');
       const d = e.target.closest('[data-detail]');
-      if (p) { onPlayClick(p.dataset.play); }
+      const f = e.target.closest('[data-fav]');
+      if (f) { toggleFavorite(f.dataset.fav); }
+      else if (p) { onPlayClick(p.dataset.play); }
       else if (d) { selectStation(d.dataset.detail, false); openModal(); }
     });
 
@@ -295,19 +338,33 @@
     applyFilter();
   }
   function applyFilter(){
-    let visible = 0;
+    let visible = 0, checking = 0;
     STATIONS.forEach(s => {
       const card = document.getElementById('st-'+s.id);
       const okTag = activeFilter === 'Все' || s.tags.includes(activeFilter);
       const okSearch = !searchTerm || s.name.toLowerCase().includes(searchTerm) || s.genre.toLowerCase().includes(searchTerm);
-      const show = okTag && okSearch;
+      const okOnline = !onlineOnly || s.status === 'online';
+      const okFav = !favoritesOnly || favorites.has(s.id);
+      const show = okTag && okSearch && okOnline && okFav;
       card.classList.toggle('is-hidden', !show);
       if (show) visible++;
+      if (onlineOnly && okTag && okSearch && okFav && (s.status === 'checking' || s.status === 'idle')) checking++;
     });
-    $('#stationsEmpty').hidden = visible !== 0;
+    const empty = $('#stationsEmpty');
+    empty.hidden = visible !== 0;
+    if (visible === 0) {
+      empty.textContent = favoritesOnly && favorites.size === 0
+        ? 'В избранном пока пусто — добавьте станции звёздочкой.'
+        : (onlineOnly && checking > 0 ? 'Проверяем доступность станций…' : 'По вашему запросу станций не найдено.');
+    }
+    const rc = $('#resultsCount');
+    if (rc) rc.textContent = `${visible} ${plural(visible,'станция','станции','станций')}`;
   }
   function getPlaylist(){
-    const vis = STATIONS.filter(s => !document.getElementById('st-'+s.id).classList.contains('is-hidden'));
+    // порядок как на экране (с учётом сортировки и фильтров)
+    const vis = $$('#stationsGrid .station-card')
+      .filter(c => !c.classList.contains('is-hidden'))
+      .map(c => stationById[c.dataset.id]).filter(Boolean);
     return vis.length ? vis : STATIONS;
   }
 
@@ -325,6 +382,8 @@
   function selectStation(id, autoplay){
     const s = stationById[id];
     if (!s) return;
+    clearReconnect();
+    audioEngine.userPaused = false;
 
     // HTTP-поток на HTTPS-странице — заблокирован браузером (mixed content)
     if (!s.secure && location.protocol === 'https:') {
@@ -345,6 +404,7 @@
   function play(){
     const s = audioEngine.currentStation;
     if (!s) return;
+    audioEngine.userPaused = false;
     if (!s.secure && location.protocol === 'https:') {
       setPlayerStatus('error', 'Только в приложении');
       toast('Этот поток вещает по HTTP и доступен только в приложении.');
@@ -374,6 +434,8 @@
   // Проба возможностей Web Audio (CORS). Выполняется один раз после жеста пользователя.
   function probeAndPlay(s){
     audioEngine.probed = true;
+    audioEngine.probing = true;
+    setTimeout(() => { audioEngine.probing = false; }, 10000);   // страховка
     const a = audioEngine.audio;
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -383,6 +445,7 @@
         a.crossOrigin = 'anonymous';
         const onFirstPlay = () => {
           a.removeEventListener('playing', onFirstPlay);
+          audioEngine.probing = false;
           if (sourceNode) return;
           try {
             sourceNode = audioContext.createMediaElementSource(a);
@@ -397,6 +460,7 @@
         };
         const onProbeError = () => {
           a.removeEventListener('error', onProbeError);
+          audioEngine.probing = false;
           // CORS не сработал — навсегда отключаем Web Audio, играем напрямую
           a.crossOrigin = null;
           audioEngine.useWebAudio = false;
@@ -409,6 +473,7 @@
         return;
       }
     } catch (_) { /* fallthrough */ }
+    audioEngine.probing = false;
     audioEngine.useWebAudio = false;
     startStream(s);
   }
@@ -421,8 +486,11 @@
       return;
     }
     if (audioEngine.isPlaying) {
+      audioEngine.userPaused = true;
+      clearReconnect();
       audioEngine.audio.pause();
     } else {
+      audioEngine.userPaused = false;
       if (audioContext && audioContext.state === 'suspended') audioContext.resume();
       if (!audioEngine.audio.src) play();
       else audioEngine.audio.play().catch(()=>{});
@@ -437,20 +505,59 @@
     selectStation(list[idx].id, true);
   }
 
+  const persistVolume = debounce(() => persist(SK.volume, String(audioEngine.volume)), 500);
   function setVolume(v){
     audioEngine.volume = Math.min(1, Math.max(0, v));
     audioEngine.audio.volume = audioEngine.volume;
     const pct = Math.round(audioEngine.volume * 100);
     $('#mpVolume').value = pct; $('#pmVolume').value = pct; $('#pmVolVal').textContent = pct + '%';
+    persistVolume();
   }
 
   // события аудио-элемента
   const a = audioEngine.audio;
-  a.addEventListener('playing', () => { audioEngine.isPlaying = true; reflectPlayState(); setPlayerStatus('online', 'В эфире'); startViz(); });
-  a.addEventListener('pause',   () => { audioEngine.isPlaying = false; reflectPlayState(); if (audioEngine.currentStation) setPlayerStatus('idle','Пауза'); });
-  a.addEventListener('waiting', () => { setPlayerStatus('loading', 'Буферизация…'); });
-  a.addEventListener('stalled', () => { setPlayerStatus('loading', 'Ожидание потока…'); });
-  a.addEventListener('error',   () => { audioEngine.isPlaying = false; reflectPlayState(); setPlayerStatus('error', 'Нет сигнала'); });
+  a.addEventListener('playing', () => {
+    audioEngine.isPlaying = true; audioEngine.userPaused = false; clearReconnect();
+    reflectPlayState(); setPlayerStatus('online', 'В эфире'); startViz(); updateMediaSession();
+  });
+  a.addEventListener('pause',   () => {
+    audioEngine.isPlaying = false; reflectPlayState(); updateMediaSession();
+    if (audioEngine.currentStation && audioEngine.userPaused) setPlayerStatus('idle', 'Пауза');
+  });
+  a.addEventListener('waiting', () => { if (audioEngine.isPlaying || !audioEngine.reconnectTimer) setPlayerStatus('loading', 'Буферизация…'); });
+  a.addEventListener('stalled', () => { if (!audioEngine.reconnectTimer) setPlayerStatus('loading', 'Ожидание потока…'); });
+  a.addEventListener('error',   () => {
+    audioEngine.isPlaying = false; reflectPlayState();
+    if (audioEngine.probing) return;                              // пробу обрабатывает probeAndPlay
+    const s = audioEngine.currentStation;
+    if (!s || audioEngine.userPaused) { setPlayerStatus('error', 'Нет сигнала'); return; }
+    if (!s.secure && location.protocol === 'https:') { setPlayerStatus('error', 'Только в приложении'); return; }
+    scheduleReconnect();                                          // обрыв потока — переподключаемся
+  });
+
+  /* ---------- Авто-переподключение при обрыве ---------- */
+  const RECONNECT_MAX = 6;
+  function scheduleReconnect(){
+    if (audioEngine.reconnectTimer) return;
+    if (audioEngine.reconnectAttempts >= RECONNECT_MAX) {
+      audioEngine.reconnectAttempts = 0;
+      setPlayerStatus('error', 'Нет сигнала');
+      toast('Не удалось переподключиться к потоку.');
+      return;
+    }
+    audioEngine.reconnectAttempts++;
+    const delay = Math.min(8000, 1000 * Math.pow(2, audioEngine.reconnectAttempts - 1)); // 1,2,4,8,8,8с
+    setPlayerStatus('loading', `Переподключение… (${audioEngine.reconnectAttempts})`);
+    audioEngine.reconnectTimer = setTimeout(() => {
+      audioEngine.reconnectTimer = null;
+      if (audioEngine.userPaused || !audioEngine.currentStation) return;
+      try { startStream(audioEngine.currentStation); } catch(_) { scheduleReconnect(); }
+    }, delay);
+  }
+  function clearReconnect(){
+    if (audioEngine.reconnectTimer) { clearTimeout(audioEngine.reconnectTimer); audioEngine.reconnectTimer = null; }
+    audioEngine.reconnectAttempts = 0;
+  }
 
   /* =======================================================
      ОБНОВЛЕНИЕ UI ПЛЕЕРА
@@ -482,6 +589,9 @@
     $('#pmGenre').textContent = s.genre;
     $('#pmDesc').textContent = s.desc;
     setTrackText($('#pmTrack'), track || '—');
+    setCoverIcon($('#mpCover'), s);
+    reflectFavButtons();
+    updateMediaSession();
   }
   // присвоение текста трека + marquee для длинных строк
   function setTrackText(el, text){
@@ -604,6 +714,8 @@
     const el = $('.sc-status', card); el.dataset.state = state;
     $('.sc-status-text', el).textContent = text;
     const s = stationById[id]; if (s) s.status = state;
+    if (onlineOnly) applyFilter();           // открыть/скрыть по мере проверки
+    if (sortMode === 'online') scheduleSort();
   }
   function checkStatus(id){
     const s = stationById[id];
@@ -645,7 +757,18 @@
       const data = await r.json();
       const arr = (data.result && (data.result.stations || data.result)) || [];
       prefixToId = {};
-      arr.forEach(x => { if (x && x.prefix != null) prefixToId[String(x.prefix)] = x.id; });
+      const iconByPrefix = {};
+      arr.forEach(x => {
+        if (!x || x.prefix == null) return;
+        prefixToId[String(x.prefix)] = x.id;
+        let ic = x.icon_fill_colored || x.icon_fill || x.icon || x.new_icon || x.svg_fill || '';
+        if (ic && ic.startsWith('/')) ic = 'https://www.radiorecord.ru' + ic;
+        if (ic) iconByPrefix[String(x.prefix)] = ic;
+      });
+      // подставляем настоящие логотипы станций
+      STATIONS.forEach(s => {
+        if (s.prefix && iconByPrefix[s.prefix]) { s.icon = iconByPrefix[s.prefix]; applyIcon(s); }
+      });
     } catch(_) { prefixToId = {}; }
   }
   async function pollNowPlaying(){
@@ -689,6 +812,7 @@
     if (audioEngine.currentStation && audioEngine.currentStation.id === s.id){
       setTrackText($('#mpTrack'), track);
       setTrackText($('#pmTrack'), track);
+      updateMediaSession();
       if (audioEngine.isPlaying) pushHistory(s, track);
     }
   }
@@ -752,6 +876,7 @@
     document.documentElement.setAttribute('data-theme', t);
     $('#themeToggle').setAttribute('aria-pressed', String(t === 'dark'));
     refreshAccent();
+    persist(SK.theme, t);
   }
   $('#themeToggle').addEventListener('click', () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -852,6 +977,24 @@
     const onSearch = debounce(val => { searchTerm = val.trim().toLowerCase(); applyFilter(); }, 300);
     $('#stationSearch').addEventListener('input', e => onSearch(e.target.value));
 
+    // избранное / только онлайн / сортировка
+    $('#favToggle').addEventListener('click', () => {
+      favoritesOnly = !favoritesOnly;
+      $('#favToggle').setAttribute('aria-pressed', String(favoritesOnly));
+      applyFilter();
+    });
+    $('#onlineToggle').addEventListener('click', () => {
+      onlineOnly = !onlineOnly;
+      $('#onlineToggle').setAttribute('aria-pressed', String(onlineOnly));
+      if (onlineOnly) STATIONS.forEach(s => queueStatusCheck(s.id));   // проверить все станции
+      applyFilter();
+    });
+    $('#sortSelect').addEventListener('change', e => { sortMode = e.target.value; sortStations(); });
+    $('#pmFav').addEventListener('click', () => { const s = audioEngine.currentStation; if (s) toggleFavorite(s.id); });
+
+    // запомнить настройки (opt-in localStorage)
+    $('#rememberToggle').addEventListener('change', e => setPersist(e.target.checked));
+
     $('#heroPlay').addEventListener('click', () => {
       $('#stations').scrollIntoView({ behavior:'smooth', block:'start' });
       const list = getPlaylist();
@@ -869,9 +1012,111 @@
   }
 
   /* =======================================================
+     MEDIA SESSION (экран блокировки / аппаратные кнопки)
+     ======================================================= */
+  function setupMediaSession(){
+    if (!('mediaSession' in navigator)) return;
+    const ms = navigator.mediaSession;
+    const set = (act, fn) => { try { ms.setActionHandler(act, fn); } catch(_){} };
+    set('play',  () => { if (!audioEngine.isPlaying) togglePlay(); });
+    set('pause', () => { if (audioEngine.isPlaying) togglePlay(); });
+    set('previoustrack', () => stepStation(-1));
+    set('nexttrack',     () => stepStation(1));
+    set('stop', () => { audioEngine.userPaused = true; clearReconnect(); audioEngine.audio.pause(); });
+  }
+  function updateMediaSession(){
+    if (!('mediaSession' in navigator)) return;
+    const s = audioEngine.currentStation; if (!s) return;
+    try {
+      const track = s.track || '';
+      if (typeof window.MediaMetadata === 'function') {
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: track || s.name,
+          artist: track ? s.name : s.genre,
+          album: 'ElectroWave Radio',
+          artwork: s.icon ? [96,128,256,512].map(sz => ({ src: s.icon, sizes: `${sz}x${sz}`, type: 'image/png' })) : []
+        });
+      }
+      navigator.mediaSession.playbackState = audioEngine.isPlaying ? 'playing' : 'paused';
+    } catch(_){}
+  }
+
+  /* =======================================================
+     ИЗБРАННОЕ
+     ======================================================= */
+  function toggleFavorite(id){
+    if (!stationById[id]) return;
+    if (favorites.has(id)) favorites.delete(id); else favorites.add(id);
+    persist(SK.favorites, JSON.stringify([...favorites]));
+    reflectFavButtons();
+    if (favoritesOnly) applyFilter();
+  }
+  function reflectFavButtons(){
+    $$('#stationsGrid [data-fav]').forEach(b => {
+      const on = favorites.has(b.dataset.fav);
+      b.classList.toggle('is-fav', on);
+      b.setAttribute('aria-pressed', String(on));
+      b.setAttribute('aria-label', on ? 'Убрать из избранного' : 'Добавить в избранное');
+    });
+    const pf = $('#pmFav'), cur = audioEngine.currentStation;
+    if (pf){
+      const on = !!(cur && favorites.has(cur.id));
+      pf.classList.toggle('is-fav', on);
+      pf.setAttribute('aria-pressed', String(on));
+      pf.setAttribute('aria-label', on ? 'Убрать из избранного' : 'Добавить в избранное');
+    }
+  }
+
+  /* =======================================================
+     СОРТИРОВКА
+     ======================================================= */
+  function sortStations(){
+    const grid = $('#stationsGrid'); if (!grid) return;
+    let order;
+    if (sortMode === 'az') order = [...STATIONS].sort((x,y) => x.name.localeCompare(y.name, 'ru'));
+    else if (sortMode === 'genre') order = [...STATIONS].sort((x,y) => x.genre.localeCompare(y.genre, 'ru') || x.name.localeCompare(y.name, 'ru'));
+    else if (sortMode === 'online') {
+      const rank = { online:0, checking:1, idle:2, offline:3 };
+      order = [...STATIONS].map((s,i) => ({s,i})).sort((p,q) => (rank[p.s.status] ?? 2) - (rank[q.s.status] ?? 2) || p.i - q.i).map(o => o.s);
+    } else order = STATIONS;
+    const frag = document.createDocumentFragment();
+    order.forEach(s => { const c = document.getElementById('st-'+s.id); if (c) frag.appendChild(c); });
+    grid.appendChild(frag);
+  }
+  let _sortTimer = null;
+  function scheduleSort(){ clearTimeout(_sortTimer); _sortTimer = setTimeout(sortStations, 250); }
+
+  /* =======================================================
+     ЛОГОТИПЫ СТАНЦИЙ
+     ======================================================= */
+  function ensureIconImg(container, s){
+    if (!s.icon || $('.station-icon', container)) return;
+    const img = new Image();
+    img.className = 'station-icon'; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.referrerPolicy = 'no-referrer';
+    img.addEventListener('load', () => container.classList.add('has-icon'));
+    img.addEventListener('error', () => { img.remove(); });
+    img.src = s.icon;
+    container.appendChild(img);
+  }
+  function applyIcon(s){
+    if (!s.icon) return;
+    const card = document.getElementById('st-'+s.id);
+    if (card){ const mono = $('.sc-monogram', card); if (mono) ensureIconImg(mono, s); }
+    if (audioEngine.currentStation && audioEngine.currentStation.id === s.id) setCoverIcon($('#mpCover'), s);
+  }
+  function setCoverIcon(coverEl, s){
+    if (!coverEl) return;
+    const existing = $('.station-icon', coverEl);
+    if (existing) existing.remove();
+    coverEl.classList.remove('has-icon');
+    if (s && s.icon) ensureIconImg(coverEl, s);
+  }
+
+  /* =======================================================
      ИНИЦИАЛИЗАЦИЯ
      ======================================================= */
   function init(){
+    loadPersisted();              // opt-in: тема/громкость/избранное (если разрешено)
     refreshAccent();
     renderFilters();
     renderStations();
@@ -882,7 +1127,13 @@
     wireControls();
     initReveal();
     initHero();
+    setupMediaSession();
     setVolume(audioEngine.volume);
+    applyFilter();                // первичный подсчёт результатов
+
+    // синхронизация состояния органов управления
+    $('#themeToggle').setAttribute('aria-pressed', String(currentTheme() === 'dark'));
+    $('#rememberToggle').checked = persistEnabled;
 
     // динамический счётчик станций в hero
     const eyebrow = $('.hero-eyebrow');

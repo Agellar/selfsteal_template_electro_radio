@@ -978,6 +978,7 @@
      ======================================================= */
   const playerModal = $('#playerModal');
   const privacyModal = $('#privacyModal');
+  const termsModal = $('#termsModal');
 
   function openModal(){
     if (!audioEngine.currentStation) return;
@@ -994,6 +995,10 @@
   function openPrivacy(){ if (typeof privacyModal.showModal === 'function') privacyModal.showModal(); else privacyModal.setAttribute('open',''); }
   $('#privacyClose').addEventListener('click', () => privacyModal.close ? privacyModal.close() : privacyModal.removeAttribute('open'));
   $$('[data-open-privacy]').forEach(b => b.addEventListener('click', openPrivacy));
+
+  function openTerms(){ if (typeof termsModal.showModal === 'function') termsModal.showModal(); else termsModal.setAttribute('open',''); }
+  $('#termsClose').addEventListener('click', () => termsModal.close ? termsModal.close() : termsModal.removeAttribute('open'));
+  $$('[data-open-terms]').forEach(b => b.addEventListener('click', openTerms));
 
   // share
   $('#pmShare').addEventListener('click', async () => {

@@ -280,6 +280,9 @@ h1, h2, h3, h4 { font-family: var(--font-display); line-height: 1.08; letter-spa
 .prose strong { font-weight: 600; }
 .prose em { font-style: italic; color: var(--text-muted); }
 .prose-sm { font-size: 0.96rem; }
+.prose-sm h3 { font-size: 1rem; margin-top: var(--s-5); margin-bottom: var(--s-2); }
+.prose-sm h3:first-of-type { margin-top: var(--s-3); }
+.footer-note { font-size: 0.8rem; max-width: 46rem; }
 .prose-sm ul { display: grid; gap: var(--s-3); margin-block: var(--s-4); }
 .prose-sm li { padding-left: var(--s-5); position: relative; }
 .prose-sm li::before { content: ""; position: absolute; left: 0; top: 0.6em; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
@@ -433,7 +436,7 @@ h1, h2, h3, h4 { font-family: var(--font-display); line-height: 1.08; letter-spa
 .footer-copy { color: var(--text-faint); font-size: 0.84rem; max-width: 46rem; }
 @media (min-width: 760px) {
   .footer-inner { grid-template-columns: 1fr auto; align-items: center; }
-  .footer-copy { grid-column: 1 / -1; }
+  .footer-copy, .footer-note { grid-column: 1 / -1; }
 }
 
 /* =========================================================
